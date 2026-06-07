@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# CDK build output
+cdk.out/
+
+# TypeScript compiled output
+dist/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables and credentials
+# NEVER commit AWS credentials or account IDs
+.env
+.env.local
+*.pem
+*.key
+
+# npm debug logs
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# Temporary files
+*.tmp
+*.bak

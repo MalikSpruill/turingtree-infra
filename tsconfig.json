@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "outDir": "dist",
+    "rootDir": "."
+  },
+  "include": ["bin/**/*", "lib/**/*", "lambda/**/*"],
+  "exclude": ["node_modules", "dist", "cdk.out"]
+}
