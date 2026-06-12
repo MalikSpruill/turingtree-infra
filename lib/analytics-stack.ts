@@ -290,15 +290,10 @@ export class AnalyticsStack extends cdk.Stack {
       })
     );
 
-    // Row 4: Alarm status summary widgets for quick health overview
-    dashboard.addWidgets(
-      new cloudwatch.AlarmStatusWidget({
-        title: 'Engineering Account — Active Alarms',
-        alarms: [], // Alarms would be added here in a full production setup
-        width: 24,
-        height: 3,
-      })
-    );
+    // NOTE: An AlarmStatusWidget is intentionally omitted. CloudWatch rejects an
+    // alarm widget with an empty `alarms` array ("Should NOT have less than 1
+    // items"), and this project defines no CloudWatch alarms. Add the widget back
+    // with one or more real `cloudwatch.Alarm` references if alarms are introduced.
 
     // ═════════════════════════════════════════════════════════════════════════
     // 3. STACK OUTPUTS
