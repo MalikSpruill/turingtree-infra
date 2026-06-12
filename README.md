@@ -149,18 +149,54 @@ export ANALYTICS_ACCOUNT_ID=444455556666
 
 CDK bootstrapping creates the S3 bucket and IAM deployment roles CDK needs to deploy stacks into an account. You must do this once per account per region before any deployment.
 
-```bash
-# Step 1: Log in to the IAM Identity Center access portal
-# Navigate to: https://d-XXXXXXXXXX.awsapps.com/start
-# Assume the AdministratorAccess role in the Engineering account
-# Export the credentials shown in the portal as environment variables
+### Setting credentials per account (the key step)
 
-# Step 2: Bootstrap the Engineering account
-cdk bootstrap aws://$ENGINEERING_ACCOUNT_ID/us-east-1
+Every `cdk bootstrap`/`deploy` command targets a specific account, and CDK refuses
+to run if the credentials active in your shell belong to a *different* account
+(`IncorrectDefaultCredentials: ... current credentials are for <other-acct>`). So
+you must load the **right account's** short-lived credentials into the shell first.
 
-# Step 3: Switch credentials to the Analytics account via the portal, then:
-cdk bootstrap aws://$ANALYTICS_ACCOUNT_ID/us-east-1
+1. Open the IAM Identity Center access portal (`https://d-XXXXXXXXXX.awsapps.com/start`).
+2. Expand the target account tile → **AdministratorAccess** role → **Access keys**.
+3. Copy the **PowerShell** block (Windows) or the **macOS/Linux** block, and paste
+   it into the **same terminal** you'll run `cdk` in.
+
+```powershell
+# PowerShell (Windows) — paste the values from the portal's "PowerShell" tab:
+$env:AWS_ACCESS_KEY_ID     = "ASIA..."
+$env:AWS_SECRET_ACCESS_KEY = "..."
+$env:AWS_SESSION_TOKEN     = "..."
+
+# Confirm the shell is on the account you expect BEFORE bootstrapping:
+aws sts get-caller-identity     # the "Account" field must match the target
 ```
+
+```bash
+# macOS / Linux — paste the values from the portal's "Bash" tab:
+export AWS_ACCESS_KEY_ID=ASIA...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_SESSION_TOKEN=...
+aws sts get-caller-identity
+```
+
+> ⚠️ These session credentials are **temporary** (they expire, often within a few
+> hours) and live only in the shell where you set them. When they expire, or when
+> you open a new terminal, re-copy a fresh block from the portal. Keep each
+> account's work in the shell that holds that account's credentials.
+
+### Bootstrap both accounts
+
+```powershell
+# 1. Load ANALYTICS (239302213899) credentials into this shell (see above), then:
+npx cdk bootstrap aws://239302213899/us-east-1
+
+# 2. Load ENGINEERING (210965991616) credentials into this shell (re-paste a new
+#    block — switching accounts means new credentials), then:
+npx cdk bootstrap aws://210965991616/us-east-1
+```
+
+CDK confirms each with `✅ Environment aws://<acct>/us-east-1 bootstrapped` and a
+`CDKToolkit` stack in that account.
 
 ---
 
