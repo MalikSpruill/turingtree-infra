@@ -101,7 +101,8 @@ turingtree-infra/
 │   └── turingtree.ts          # CDK app entry point — wires stacks to accounts
 ├── lib/
 │   ├── engineering-stack.ts   # VPC, Lambda, API Gateway, DynamoDB, OAM Link
-│   └── analytics-stack.ts     # OAM Sink, cross-account CloudWatch Dashboard
+│   ├── analytics-stack.ts     # OAM Sink, cross-account CloudWatch Dashboard
+│   └── constants.ts           # Shared resource names used by both stacks
 ├── lambda/
 │   └── project-status/
 │       └── index.ts           # Lambda handler (TypeScript, bundled by NodejsFunction)
@@ -166,7 +167,11 @@ cdk bootstrap aws://$ANALYTICS_ACCOUNT_ID/us-east-1
 ## Deployment Order
 
 > ⚠️ **Critical:** The Analytics stack MUST be deployed first because the Engineering
-> stack's OAM Link requires the OAM Sink ARN (a CloudFormation export from the Analytics stack).
+> stack's OAM Link needs the OAM Sink ARN, which only exists after the Analytics
+> stack is deployed. The ARN is **not** a CloudFormation export — CloudFormation
+> exports/imports can't cross account boundaries — so you pass it to the Engineering
+> deploy as the `OamSinkArn` CloudFormation parameter. CloudFormation stores the
+> value on the stack, so later re-deploys (from any machine/CI) can omit it.
 
 ```bash
 # ── Step 1: Deploy the Analytics stack (creates the OAM Sink) ──────────────
@@ -176,7 +181,8 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_SESSION_TOKEN=...
 
 npm run deploy:analytics
-# CDK will output: TuringTree-Analytics-SinkArn = arn:aws:oam:us-east-1:...
+# CDK will output: MonitoringSinkArn = arn:aws:oam:us-east-1:<analytics-acct>:sink/<id>
+# Copy that ARN — you pass it to the Engineering deploy below.
 
 # ── Step 2: Deploy the Engineering stack ───────────────────────────────────
 # Switch credentials to the Engineering account via the portal
@@ -184,8 +190,12 @@ export AWS_ACCESS_KEY_ID=...      # From the Engineering account session
 export AWS_SECRET_ACCESS_KEY=...
 export AWS_SESSION_TOKEN=...
 
-npm run deploy:engineering
+# Pass the Sink ARN from Step 1 as a CloudFormation parameter:
+npx cdk deploy TuringTree-Engineering \
+  --parameters OamSinkArn=arn:aws:oam:us-east-1:<analytics-acct>:sink/<id>
 # CDK will output: ApiGatewayUrl, LambdaFunctionName, VpcId, etc.
+# (Subsequent re-deploys can run `npm run deploy:engineering` with no --parameters;
+#  CloudFormation reuses the stored OamSinkArn value.)
 ```
 
 ---
@@ -257,7 +267,7 @@ aws iam create-user --user-name test-iam-user --region us-east-1
 
 **Why private isolated subnets with no NAT Gateway?** TuringTree's security policy mandates all compute in private subnets. The Lambda only needs to reach DynamoDB, which is served via a free VPC Gateway Endpoint. No public internet access is needed, so no NAT Gateway is needed — removing both the cost (~$32/month/AZ) and the internet exposure.
 
-**Why deploy Analytics before Engineering?** The Engineering stack creates an OAM Link that references the OAM Sink ARN in the Analytics account. The Sink must exist first. This is a real-world CDK dependency management pattern — documenting it shows understanding of multi-account deployment sequencing.
+**Why deploy Analytics before Engineering?** The Engineering stack creates an OAM Link that references the OAM Sink ARN in the Analytics account, so the Sink must exist first. Note the *mechanism*: because the two stacks live in different accounts, the Sink ARN can't be shared via a CloudFormation export/import (those are confined to a single account and region). Instead the ARN is passed to the Engineering deploy as the `OamSinkArn` CloudFormation parameter. Knowing that exports don't cross accounts — and choosing a parameter instead — is itself the multi-account-sequencing insight worth demonstrating.
 
 **Why CDK TypeScript over CloudFormation YAML?** CDK synthesizes to CloudFormation at deploy time, so you get all of CloudFormation's rollback, change sets, and state management. TypeScript adds type safety (misconfigured props are caught at compile time), reusability (constructs can be shared across stacks), and testability (CDK assertions). Enterprise teams building AWS-native workloads increasingly default to CDK for exactly these reasons.
 
@@ -295,7 +305,7 @@ This project provides hands-on evidence of the following production-grade skills
 
 **Governance:** AWS multi-account strategy, Control Tower Landing Zone, Account Factory, OU hierarchy design, SCP policy-as-code
 
-**IaC Engineering:** AWS CDK TypeScript, multi-stack multi-account deployment, CDK cross-stack exports, NodejsFunction with esbuild bundling, CDK cdk synth/diff workflow
+**IaC Engineering:** AWS CDK TypeScript, multi-stack multi-account deployment, cross-account value passing via CloudFormation stack parameters (exports/imports are single-account, so a parameter carries the OAM Sink ARN across the account boundary), NodejsFunction with esbuild bundling, CDK cdk synth/diff workflow
 
 **Observability:** CloudWatch OAM cross-account metric sharing, CloudWatch Dashboards, X-Ray distributed tracing, API Gateway access logging, VPC Flow Logs
 

@@ -9,15 +9,21 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as oam from 'aws-cdk-lib/aws-oam';
 import { Construct } from 'constructs';
 import * as path from 'path';
+import {
+  PROJECT_STATUS_FUNCTION_NAME,
+  PROJECT_STATUS_API_NAME,
+  API_STAGE_NAME,
+} from './constants';
 
 /**
  * Props for the Engineering stack.
- * We accept `analyticsAccountId` so this stack can grant the Analytics
- * account permission to observe its CloudWatch metrics via OAM.
+ *
+ * No extra props are required: the cross-account observability grant is owned by
+ * the Analytics account's OAM Sink policy (which names this Engineering account),
+ * and the Sink ARN this stack links to is supplied at deploy time as the
+ * `OamSinkArn` CloudFormation parameter (see section 7 below).
  */
-export interface EngineeringStackProps extends cdk.StackProps {
-  analyticsAccountId: string;
-}
+export interface EngineeringStackProps extends cdk.StackProps {}
 
 /**
  * EngineeringStack
@@ -36,10 +42,8 @@ export interface EngineeringStackProps extends cdk.StackProps {
  * without giving it any write access or role assumption rights.
  */
 export class EngineeringStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props: EngineeringStackProps) {
+  constructor(scope: Construct, id: string, props?: EngineeringStackProps) {
     super(scope, id, props);
-
-    const { analyticsAccountId } = props;
 
     // ═════════════════════════════════════════════════════════════════════════
     // 1. CUSTOM VPC
@@ -190,7 +194,7 @@ export class EngineeringStack extends cdk.Stack {
     //     (enterprise observability standard — correlates API Gateway → Lambda)
     // ═════════════════════════════════════════════════════════════════════════
     const projectStatusFn = new NodejsFunction(this, 'ProjectStatusFunction', {
-      functionName: 'TuringTree-ProjectStatus',
+      functionName: PROJECT_STATUS_FUNCTION_NAME,
       entry: path.join(__dirname, '../lambda/project-status/index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -241,7 +245,7 @@ export class EngineeringStack extends cdk.Stack {
     // the caller is who they claim to be and the request wasn't tampered with.
     // ═════════════════════════════════════════════════════════════════════════
     const api = new apigateway.RestApi(this, 'ProjectStatusApi', {
-      restApiName: 'TuringTree-ProjectStatus-API',
+      restApiName: PROJECT_STATUS_API_NAME,
       description: 'TuringTree internal Project Status API (IAM-authorized, SigV4)',
       endpointConfiguration: {
         // REGIONAL: serves from the same region as the Lambda.
@@ -251,7 +255,7 @@ export class EngineeringStack extends cdk.Stack {
         types: [apigateway.EndpointType.REGIONAL],
       },
       deployOptions: {
-        stageName: 'v1',
+        stageName: API_STAGE_NAME,
         tracingEnabled: true,         // X-Ray traces propagated from API Gateway → Lambda
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
         dataTraceEnabled: false,      // Never log request/response bodies — they may contain PII
@@ -308,23 +312,46 @@ export class EngineeringStack extends cdk.Stack {
     // any resources in this account. This separation is the whole point of the
     // cross-account access story: the Analyst persona sees data, not resources.
     //
-    // IMPORTANT: The Sink must be deployed in the Analytics account FIRST.
-    // The Sink ARN is passed in as a CDK cross-stack export from AnalyticsStack.
-    // Because both stacks target different accounts, CDK cannot resolve this at
-    // synth time — you must deploy Analytics first, then Engineering.
-    // See README.md for the correct deployment order.
+    // HOW THE SINK ARN GETS HERE (and why it is NOT a CloudFormation export):
+    //   CloudFormation Export/Fn::ImportValue cross-stack references work only
+    //   within a SINGLE account and region. The Sink lives in the Analytics
+    //   account, so its export is invisible to this (Engineering) account —
+    //   importing it would fail with "No export named ... found".
+    //
+    //   Instead we accept the Sink ARN as a CloudFormation PARAMETER. You deploy
+    //   AnalyticsStack first, read its `MonitoringSinkArn` output, and pass it on
+    //   the Engineering deploy: `--parameters OamSinkArn=arn:aws:oam:...:sink/...`.
+    //   CloudFormation persists the parameter on the stack, so later deploys from
+    //   any machine/CI reuse the stored value without re-supplying it.
+    //
+    //   The Link is wrapped in a condition so the stack can also deploy with an
+    //   empty OamSinkArn (e.g. a first pass before the Sink exists, or teardown);
+    //   in that case the Link is simply omitted.
     // ═════════════════════════════════════════════════════════════════════════
-    new oam.CfnLink(this, 'EngineeringToAnalyticsOamLink', {
+    const oamSinkArn = new cdk.CfnParameter(this, 'OamSinkArn', {
+      type: 'String',
+      default: '',
+      description:
+        'ARN of the OAM Sink in the Analytics account (the TuringTree-Analytics ' +
+        'MonitoringSinkArn output). Leave empty to skip the cross-account link.',
+    });
+
+    const hasOamSink = new cdk.CfnCondition(this, 'HasOamSink', {
+      expression: cdk.Fn.conditionNot(
+        cdk.Fn.conditionEquals(oamSinkArn.valueAsString, '')
+      ),
+    });
+
+    const oamLink = new oam.CfnLink(this, 'EngineeringToAnalyticsOamLink', {
       labelTemplate: '$AccountName',  // Displays as the account name in the sink
       resourceTypes: [
         'AWS::CloudWatch::Metric',
         'AWS::Logs::LogGroup',
       ],
-      // The sinkIdentifier is the ARN of the OAM Sink in the Analytics account.
-      // This value is exported by AnalyticsStack and must be supplied here.
       // Format: arn:aws:oam:us-east-1:<analytics-account-id>:sink/<sink-id>
-      sinkIdentifier: cdk.Fn.importValue('TuringTree-Analytics-SinkArn'),
+      sinkIdentifier: oamSinkArn.valueAsString,
     });
+    oamLink.cfnOptions.condition = hasOamSink;
 
     // ═════════════════════════════════════════════════════════════════════════
     // 8. STACK OUTPUTS

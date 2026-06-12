@@ -43,12 +43,14 @@ if (!engineeringAccountId || !analyticsAccountId) {
 // VPC, Lambda, API Gateway, DynamoDB — the internal Project Status API.
 // Deployed into the Engineering AWS account under the Workloads OU.
 // ─────────────────────────────────────────────────────────────────────────────
-const engineeringStack = new EngineeringStack(app, 'TuringTree-Engineering', {
+new EngineeringStack(app, 'TuringTree-Engineering', {
   env: {
     account: engineeringAccountId,
     region: 'us-east-1',
   },
-  analyticsAccountId, // Passed in so the stack can grant cross-account OAM access
+  // The OAM Sink ARN this stack links to is supplied at deploy time as the
+  // `OamSinkArn` CloudFormation parameter (deploy Analytics first, then pass its
+  // MonitoringSinkArn output). See the OAM Link section in engineering-stack.ts.
   description:
     'TuringTree Engineering workload: private VPC, Lambda Project Status API, API Gateway (IAM auth), DynamoDB',
   tags: {
@@ -70,10 +72,7 @@ new AnalyticsStack(app, 'TuringTree-Analytics', {
     account: analyticsAccountId,
     region: 'us-east-1',
   },
-  engineeringAccountId,
-  // The Lambda function name is an output of the Engineering stack.
-  // CDK resolves this as a CloudFormation cross-stack export reference.
-  engineeringLambdaFunctionName: cdk.Fn.importValue('TuringTree-Engineering-LambdaName'),
+  engineeringAccountId, // Authorizes only this account to link into the OAM Sink
   description:
     'TuringTree Analytics workload: CloudWatch OAM Sink, cross-account Engineering health dashboard',
   tags: {

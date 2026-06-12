@@ -2,17 +2,25 @@ import * as cdk from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as oam from 'aws-cdk-lib/aws-oam';
 import { Construct } from 'constructs';
+import {
+  PROJECT_STATUS_FUNCTION_NAME,
+  PROJECT_STATUS_API_NAME,
+  API_STAGE_NAME,
+  HOME_REGION,
+} from './constants';
 
 /**
  * Props for the Analytics stack.
  * We need the Engineering account ID to configure the OAM Sink policy
- * (which account is allowed to link and share metrics into this sink),
- * and the Lambda function name to build the cross-account metric references
- * on the CloudWatch dashboard.
+ * (which account is allowed to link and share metrics into this sink).
+ *
+ * The Engineering Lambda/API names used to build the dashboard widgets are NOT
+ * props: they are fixed, shared constants (see lib/constants.ts) that both
+ * stacks import. This avoids a cross-account CloudFormation export/import, which
+ * is impossible — exports are scoped to a single account and region.
  */
 export interface AnalyticsStackProps extends cdk.StackProps {
   engineeringAccountId: string;
-  engineeringLambdaFunctionName: string;
 }
 
 /**
@@ -41,7 +49,7 @@ export class AnalyticsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: AnalyticsStackProps) {
     super(scope, id, props);
 
-    const { engineeringAccountId, engineeringLambdaFunctionName } = props;
+    const { engineeringAccountId } = props;
 
     // ═════════════════════════════════════════════════════════════════════════
     // 1. CLOUDWATCH OAM SINK (Observability Access Manager)
@@ -55,14 +63,16 @@ export class AnalyticsStack extends cdk.Stack {
     // the Analytics account controls who it accepts data from.
     //
     // DEPLOYMENT ORDER REQUIREMENT:
-    //   AnalyticsStack MUST be deployed BEFORE EngineeringStack, because
-    //   the Engineering stack's OAM Link requires this Sink's ARN to exist.
-    //   The CDK cross-stack export (exportName below) provides the ARN
-    //   to the Engineering stack at deploy time.
+    //   AnalyticsStack MUST be deployed BEFORE EngineeringStack, because the
+    //   Engineering stack's OAM Link needs this Sink's ARN to exist. After this
+    //   stack deploys, take the `MonitoringSinkArn` output and feed it to the
+    //   Engineering deploy as the `OamSinkArn` parameter. (A CloudFormation
+    //   export would NOT work — the Engineering stack is in another account, and
+    //   exports/imports are confined to a single account and region.)
     // ═════════════════════════════════════════════════════════════════════════
     const monitoringSink = new oam.CfnSink(this, 'TuringTreeMonitoringSink', {
       name: 'TuringTree-Monitoring-Sink',
-      policy: JSON.stringify({
+      policy: {
         Version: '2012-10-17',
         Statement: [
           {
@@ -92,7 +102,7 @@ export class AnalyticsStack extends cdk.Stack {
             },
           },
         ],
-      }),
+      },
     });
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -109,18 +119,18 @@ export class AnalyticsStack extends cdk.Stack {
     // Link established between the accounts — CloudWatch uses the link
     // permissions to authorize the cross-account metric read.
     //
-    // Note: the `engineeringLambdaFunctionName` prop is a CDK cross-stack
-    // export resolved at deploy time — it corresponds to the function name
-    // output by the Engineering stack.
+    // The Engineering Lambda/API names come from shared constants (lib/constants.ts),
+    // the same literals the Engineering stack uses to name those resources. No
+    // cross-stack reference is involved — the names are fixed and known at synth.
     // ═════════════════════════════════════════════════════════════════════════
 
-    // Lambda Metric definitions — all scoped to the Engineering account
+    // Lambda Metric definitions — scoped to the Engineering account via `account`
     const lambdaInvocations = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'Invocations',
-      dimensionsMap: { FunctionName: engineeringLambdaFunctionName },
+      dimensionsMap: { FunctionName: PROJECT_STATUS_FUNCTION_NAME },
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Sum',
       label: 'Invocations (5m)',
@@ -129,9 +139,9 @@ export class AnalyticsStack extends cdk.Stack {
     const lambdaErrors = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'Errors',
-      dimensionsMap: { FunctionName: engineeringLambdaFunctionName },
+      dimensionsMap: { FunctionName: PROJECT_STATUS_FUNCTION_NAME },
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Sum',
       color: cloudwatch.Color.RED,
@@ -141,9 +151,9 @@ export class AnalyticsStack extends cdk.Stack {
     const lambdaDurationP99 = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'Duration',
-      dimensionsMap: { FunctionName: engineeringLambdaFunctionName },
+      dimensionsMap: { FunctionName: PROJECT_STATUS_FUNCTION_NAME },
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'p99',
       color: cloudwatch.Color.ORANGE,
@@ -153,9 +163,9 @@ export class AnalyticsStack extends cdk.Stack {
     const lambdaConcurrency = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'ConcurrentExecutions',
-      dimensionsMap: { FunctionName: engineeringLambdaFunctionName },
+      dimensionsMap: { FunctionName: PROJECT_STATUS_FUNCTION_NAME },
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Maximum',
       label: 'Concurrent Executions (max)',
@@ -164,9 +174,9 @@ export class AnalyticsStack extends cdk.Stack {
     const lambdaThrottles = new cloudwatch.Metric({
       namespace: 'AWS/Lambda',
       metricName: 'Throttles',
-      dimensionsMap: { FunctionName: engineeringLambdaFunctionName },
+      dimensionsMap: { FunctionName: PROJECT_STATUS_FUNCTION_NAME },
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Sum',
       color: cloudwatch.Color.PURPLE,
@@ -174,15 +184,17 @@ export class AnalyticsStack extends cdk.Stack {
     });
 
     // API Gateway Metric definitions
+    const apiDimensions = {
+      ApiName: PROJECT_STATUS_API_NAME,
+      Stage: API_STAGE_NAME,
+    };
+
     const api4xx = new cloudwatch.Metric({
       namespace: 'AWS/ApiGateway',
       metricName: '4XXError',
-      dimensionsMap: {
-        ApiName: 'TuringTree-ProjectStatus-API',
-        Stage: 'v1',
-      },
+      dimensionsMap: apiDimensions,
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Sum',
       color: cloudwatch.Color.ORANGE,
@@ -192,12 +204,9 @@ export class AnalyticsStack extends cdk.Stack {
     const api5xx = new cloudwatch.Metric({
       namespace: 'AWS/ApiGateway',
       metricName: '5XXError',
-      dimensionsMap: {
-        ApiName: 'TuringTree-ProjectStatus-API',
-        Stage: 'v1',
-      },
+      dimensionsMap: apiDimensions,
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'Sum',
       color: cloudwatch.Color.RED,
@@ -207,12 +216,9 @@ export class AnalyticsStack extends cdk.Stack {
     const apiLatency = new cloudwatch.Metric({
       namespace: 'AWS/ApiGateway',
       metricName: 'Latency',
-      dimensionsMap: {
-        ApiName: 'TuringTree-ProjectStatus-API',
-        Stage: 'v1',
-      },
+      dimensionsMap: apiDimensions,
       account: engineeringAccountId,
-      region: 'us-east-1',
+      region: HOME_REGION,
       period: cdk.Duration.minutes(5),
       statistic: 'p95',
       label: 'API Latency p95 (ms)',
@@ -239,7 +245,7 @@ export class AnalyticsStack extends cdk.Stack {
       })
     );
 
-    // Row 2: Lambda invocations, errors, and throttles
+    // Row 2: Lambda invocations, errors, throttles, and concurrency
     dashboard.addWidgets(
       new cloudwatch.GraphWidget({
         title: 'Lambda: Invocations & Errors (Engineering Account)',
@@ -297,11 +303,14 @@ export class AnalyticsStack extends cdk.Stack {
     // ═════════════════════════════════════════════════════════════════════════
     // 3. STACK OUTPUTS
     // ═════════════════════════════════════════════════════════════════════════
+    // Copy this ARN after deploy and pass it to the Engineering stack as the
+    // `OamSinkArn` CloudFormation parameter. It is intentionally NOT a CloudFormation
+    // export: the Engineering stack lives in a different account, and exports cannot
+    // be imported across accounts.
     new cdk.CfnOutput(this, 'MonitoringSinkArn', {
       value: monitoringSink.attrArn,
-      description: 'OAM Sink ARN — referenced by the Engineering stack OAM Link',
-      // This export is consumed by the Engineering stack's OAM Link resource
-      exportName: 'TuringTree-Analytics-SinkArn',
+      description:
+        'OAM Sink ARN — pass to the Engineering deploy as --parameters OamSinkArn=<this value>',
     });
 
     new cdk.CfnOutput(this, 'DashboardUrl', {
